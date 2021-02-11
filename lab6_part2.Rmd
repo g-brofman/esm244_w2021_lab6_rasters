@@ -1,0 +1,158 @@
+---
+title: "lab 6 part 2 -rasters"
+author: "Grace Brofman"
+date: "2/11/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(raster) # load this before tidyverse
+library(tidyverse)
+library(here)
+library(sf)
+library(fasterize)
+```
+
+# The data
+
+```{r}
+knitr::include_graphics("img/landsat.png") #screen capture of website this came from
+```
+## Load and inspect the data 
+
+```{r}
+landsat_file <- here("data/Landsat7.tif")
+
+ls_1 <- raster(landsat_file)
+ls_1
+
+```
+
+```{r}
+plot(ls_1)
+
+```
+
+
+```{r}
+ls_2 <- raster(landsat_file, band = 2) #band = tells it exactly which band to use
+ls_3 <- raster(landsat_file, band = 3)
+ls_4 <- raster(landsat_file, band = 4)
+
+ls_stack <- raster::stack(landsat_file) # reads in all 5 layers at once
+ls_stack
+```
+
+## Preparing the data
+
+```{r}
+#aggregating layer to gether to make them less "memory intensive" e.g. grouping 4 cells into 1 cell, using aggregate function 
+ls_1 <- raster::aggregate(ls_1, fact = 3, fun = mean) # overwriting original layers (factor = 3 makes a 3x3 grid to turn into 1 cell)
+ls_2 <- raster::aggregate(ls_2, fact = 3, fun = mean)
+ls_3 <- raster::aggregate(ls_3, fact = 3, fun = mean)
+ls_4 <- raster::aggregate(ls_4, fact = 3, fun = mean)
+
+ls_4 # resolution is now 90x90 as opposed to 30x30, there are fewer rows and columns
+
+plot(ls_1, col = hcl.colors(n = 100, palette = "Blues 2"))
+plot(ls_2, col = hcl.colors(n = 100, palette = "Greens 2"))
+plot(ls_3, col = hcl.colors(n = 100, palette = "Reds 2"))
+plot(ls_4, col = hcl.colors(n = 100, palette = "Reds 2"))
+```
+
+```{r}
+# masking the layers - basically cuting out everything that's not land
+sbc_rast <- raster(here("data/county.tif")) # has same data resolution, extent, CRS, etc. or it wouldn't work
+
+plot(ls_3)
+mask(ls_3, sbc_rast) %>% 
+  plot() # take this raster (ls_3) and only keep the values that are in this raster(sbc_rast)
+
+ls_3 <- mask(ls_3, sbc_rast)
+ls_4 <- mask(ls_4, sbc_rast)
+```
+# working with rasters
+## raster algebra (each cell has a numeric or n/a value)
+```{r}
+vec1 <- 1:5   #vector math
+vec1
+vec1*2
+vec1^2
+
+ls_3      #raster math works the same
+ls_3*2
+log(ls_3)
+
+plot(ls_3); plot(log(ls_3))
+
+
+
+```
+
+```{r}
+# working with multiple rasters at once
+
+vec2 <- 6:10
+vec1+vec2
+ls_3 + ls_4
+```
+## raster::calc() for more complicated calculations
+```{r}
+ls_stack <- stack(ls_1, ls_2, ls_3, ls_4)
+ls_mean <- raster::calc(ls_stack, fun = mean, na.rm = FALSE)
+
+plot(ls_mean) # the ocean is "missing" because layer 3 has na values in ocean cells
+```
+
+# Analysis
+
+## NDVI- estimates the amount of forest cover based on chlorophyll - absords red light, reflects infrared
+
+```{r}
+knitr::include_graphics("img/spectrum.png")
+
+knitr::include_graphics("img/ir_photo.jpg") #infrared photograph of trees
+```
+
+$$NDVI = \frac{NIR - Red} {NIR + Red}$$
+```{r}
+ndvi <- (ls_4 - ls_3) / (ls_4 + ls_3)
+
+plot(ndvi, col = hcl.colors(100, "grays"))
+
+is_forest <- function(x, thresh = .3) {
+  y <- ifelse(x >= thresh, 1, NA)
+  return(y)
+}
+
+forest <- calc(ndvi, fun = is_forest)
+
+plot(forest, col = "green")
+```
+
+# ggplot and rasters
+
+```{r}
+# create a dataframe from our ndvi
+ndvi_df <- raster::rasterToPoints(ndvi) %>%  # converts raster into a matrix with x,y
+  as.data.frame() #coerces matrix into dataframe format (layer column = ndvi values)
+
+forest_df <- raster::rasterToPoints(forest) %>% 
+  as.data.frame()
+
+ggplot(data = ndvi_df, 
+       aes(x = x, y = y, fill = layer)) +
+  geom_raster() +
+  geom_raster(data = forest_df, fill = "green") +
+  coord_sf(expand = 0) +
+  scale_fill_gradient(low = "black", high = "white") +
+  theme_void() +
+  theme(panel.background = element_rect(fill = "slateblue4"))
+```
+
+
+
